@@ -118,42 +118,42 @@ make frontend-test     # vitest run
 ## 5. UI/UX Wireframe (ASCII)
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│ WES · Workstreams                                  ● live    │
-├──────────────────────────────────────────────────────────────┤
-│ [all] [draft] [in_review] [approved] [blocked] [done]         │
-│                                                                │
-│ [ + New Workstream ]                                          │
-│                                                                │
-│ ┌────────────────────────────────────────────┐  risk         │
-│ │ Migrate EKS to AKS               [blocked]  │  78.5   ← ring│
-│ ├────────────────────────────────────────────┤  flashes on   │
+┌─────────────────────────────────────────────────────────────────┐
+│ WES · Workstreams                                  ● live       │
+├─────────────────────────────────────────────────────────────────┤
+│ [all] [draft] [in_review] [approved] [blocked] [done]           │
+│                                                                 │
+│ [ + New Workstream ]                                            │
+│                                                                 │
+│ ┌──────────────────────────────────────────────┐  risk          │
+│ │ Migrate EKS to AKS               [blocked]   │  78.5   ← ring │
+│ ├──────────────────────────────────────────────┤  flashes on    │
 │ │ Consolidate observability         [in_review]│  34.0   SignalR│
-│ ├────────────────────────────────────────────┤          push │
-│ │ RAG index Hermes docs             [approved] │  22.0         │
-│ └────────────────────────────────────────────┘               │
-└──────────────────────────────────────────────────────────────┘
+│ ├──────────────────────────────────────────────┤          push  │
+│ │ RAG index Hermes docs             [approved] │  22.0          │
+│ └──────────────────────────────────────────────┘                │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ## 6. Runtime Architecture
 
 ```
 ┌────────────┐  OAuth2/OIDC/JWT   ┌────────────────┐  gRPC (Tonic)   ┌────────────────┐
-│  React/TS  │ ─────────────────▶ │   FastAPI WES  │ ───────────────▶│  Rust Engine   │
-│  Frontend  │ ◀───REST/JSON───── │      API       │ ◀──score────────│ Axum + Tonic   │
+│  React/TS  │ ────────────────▶ │   FastAPI WES   │ ──────────────▶│  Rust Engine   │
+│  Frontend  │ ◀───REST/JSON──── │      API        │ ◀──score───────│ Axum + Tonic   │
 └─────┬──────┘                    └───────┬────────┘                 └────────────────┘
       │  WS (local) /                     │  publish
       │  Azure SignalR (prod)             ▼
-      │                         ┌────────────────────┐
+      │                         ┌─────────────────────┐
       └────────live push─────── │ Azure Event Hubs    │
-                                 │ (native + Kafka-    │
-                                 │  compatible :9093)  │
-                                 └──────────┬──────────┘
-                                            │
-                                 ┌──────────▼──────────┐
-                                 │ RAG: Azure AI Search │
+                                │ (native + Kafka-    │
+                                │  compatible :9093)  │
+                                └──────────┬──────────┘
+                                           │
+                                 ┌─────────▼─────────────┐
+                                 │ RAG: Azure AI Search  │
                                  │ + HelixDB + TensorZero│
-                                 └──────────────────────┘
+                                 └───────────────────────┘
 ```
 
 ## 7. Cloud-Portable Fallback Matrix
@@ -194,3 +194,74 @@ seam — not asserted, not mocked away.
 - **`.proto` as single source of truth** — `tonic-build` (Rust) and
   `grpc_tools.protoc` (Python) both generate from `risk.proto`, so the
   contract can never silently drift between the two language runtimes.
+
+## 9. Layer Responsibilities — Who Does What
+
+Three languages, three distinct jobs. Each layer owns one concern and never reaches into another's — the boundary itself is the design.
+
+- **Python / FastAPI (`backend/`)** — orchestration & business logic.
+  Owns request handling, auth (Entra ID/JWT), domain rules, event
+  publishing (Event Hubs/Kafka), real-time fan-out (SignalR), and RAG
+  orchestration. It never does heavy compute itself — it delegates.
+
+- **Rust / Axum + Tonic (`rust-engine/`)** — performance-critical compute.
+  Owns exactly one thing: risk/priority scoring, exposed over both HTTP
+  (Axum) and gRPC (Tonic) from a single shared core (`risk.rs`). No
+  business rules, no auth, no persistence — a pure, fast calculator
+  callable by anything.
+
+- **React / TypeScript (`frontend/`)** — presentation & client state.
+  Owns rendering, user interaction, server-state caching (React Query),
+  and ephemeral UI-local state (Zustand). It never computes a risk score
+  or decides business rules — it only displays what Python/Rust produce
+  and sends intents (create, transition) back to the API.
+
+Data flows one direction for commands (UI → API → Engine) and one
+direction for live updates (Engine/Backbone → UI), so no layer ever
+calls "backwards" into a layer above it.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         PRESENTATION LAYER                          │
+│                    React + TypeScript (frontend/)                   │
+│                                                                     │
+│   • Renders Workstream board, forms, live status                    │
+│   • React Query  → server-state cache (list, mutations)             │
+│   • Zustand       → local UI state (filters, flash animations)      │
+│   • useAuth        → Entra ID token acquisition (MSAL-style)        │
+│   • useRealtimeWorkstreams → WebSocket/SignalR listener             │
+└───────────────┬───────────────────────────────────────────▲─────────┘
+                │ HTTPS + JWT                               │ live push
+                │ (create/update Workstream,                │ (WorkstreamEvent
+                │  semantic search)                         │  over SignalR/WS)
+                ▼                                               │
+┌─────────────────────────────────────────────────────────────────────┐
+│                       ORCHESTRATION LAYER                           │
+│                  Python + FastAPI (backend/)                        │
+│                                                                     │
+│   • Validates JWT (Entra ID), enforces roles                        │
+│   • Owns domain rules & Workstream lifecycle                        │
+│   • Publishes events → Event Hubs / Kafka-compatible topic          │
+│   • Broadcasts events → Azure SignalR / local WS hub                │
+│   • Orchestrates RAG (Azure AI Search + HelixDB + TensorZero)       │
+│   • Delegates scoring → Rust engine (never computes it itself)      │
+└───────────────┬───────────────────────────────────────────▲─────────┘
+                │ gRPC (Tonic)                              │ score
+                │ ScoreRequest{title, status}               │ result
+                ▼                                           │
+┌─────────────────────────────────────────────────────────────────────┐
+│                        COMPUTE LAYER                                │
+│              Rust + Axum + Tonic (rust-engine/)                     │
+│                                                                     │
+│   • risk.rs   → single scoring algorithm, no I/O, unit-tested       │
+│   • grpc.rs   → Tonic service, called by Python backend             │
+│   • http.rs   → Axum HTTP twin, for non-gRPC tooling                │
+│   • No auth, no persistence, no business rules — pure compute       │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Rule of thumb:**
+
+- If it's **seen**, it's **TypeScript**.
+- If it's **decided**, it's **Python**.
+- If it's **computed under a latency budget**, it's **Rust**.
