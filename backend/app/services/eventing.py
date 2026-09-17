@@ -9,7 +9,6 @@ behind one interface so callers never branch on transport.
 """
 from __future__ import annotations
 
-import json
 from typing import Protocol
 
 from app.core.telemetry import get_logger
@@ -38,8 +37,8 @@ class EventHubPublisher:
         self._eventhub_name = eventhub_name
 
     async def publish(self, event: WorkstreamEvent) -> None:
-        from azure.eventhub.aio import EventHubProducerClient
         from azure.eventhub import EventData
+        from azure.eventhub.aio import EventHubProducerClient
 
         async with EventHubProducerClient.from_connection_string(
             conn_str=self._connection_str, eventhub_name=self._eventhub_name

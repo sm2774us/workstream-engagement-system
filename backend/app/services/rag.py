@@ -41,7 +41,7 @@ def _fake_embed(text: str, dims: int = 32) -> list[float]:
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
-    return sum(x * y for x, y in zip(a, b))
+    return sum(x * y for x, y in zip(a, b, strict=False))
 
 
 class InMemoryHybridGateway:
