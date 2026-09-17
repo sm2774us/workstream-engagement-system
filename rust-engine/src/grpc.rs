@@ -26,5 +26,5 @@ impl RiskEngine for RiskEngineService {
 }
 
 pub fn service() -> RiskEngineServer<RiskEngineService> {
-    RiskEngineServer::new(RiskEngineService::default())
+    RiskEngineServer::new(RiskEngineService)
 }
