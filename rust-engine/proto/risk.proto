@@ -1,0 +1,19 @@
+// gRPC contract for the Tonic risk-scoring service. Consumed by:
+//  - Rust (server): generated server trait via build.rs / tonic-build
+//  - Python (client): stubs generated via `python -m grpc_tools.protoc`
+syntax = "proto3";
+package risk;
+
+service RiskEngine {
+  rpc ScoreWorkstream (ScoreRequest) returns (ScoreResponse);
+}
+
+message ScoreRequest {
+  string title = 1;
+  string status = 2;
+}
+
+message ScoreResponse {
+  double score = 1;
+  string engine = 2; // "rust" — distinguishes from the Python fallback heuristic
+}

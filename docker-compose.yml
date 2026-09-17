@@ -1,0 +1,20 @@
+# Local, zero-Azure-subscription composition of all three services.
+# Event Hubs / SignalR / Entra ID are represented by the in-process
+# fallbacks documented in README.md "Cloud-Portable Fallback Matrix".
+version: "3.9"
+services:
+  rust-engine:
+    build: ./rust-engine
+    ports: ["8080:8080", "50051:50051"]
+
+  backend:
+    build: ./backend
+    ports: ["8000:8000"]
+    environment:
+      - WES_RUST_ENGINE_GRPC_TARGET=rust-engine:50051
+    depends_on: [rust-engine]
+
+  frontend:
+    build: ./frontend
+    ports: ["5173:80"]
+    depends_on: [backend]
